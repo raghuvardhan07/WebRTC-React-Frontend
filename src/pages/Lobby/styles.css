@@ -1,0 +1,31 @@
+.lobby {
+    margin: 0;
+    height: 100vh;
+    width:100vw;
+    background-color: rgb(168, 203, 228);
+    font-family: 'Cascadia Mono', Courier, monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.join-form {
+    width: 450px;
+    height: 250px;
+    background-color: rgb(111, 149, 176);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    border-radius: 10px;
+}
+input[type="text"] {
+    font-family: 'Cascadia Mono', Courier, monospace;
+    font-size: 1.5rem;
+    width: 70%;
+    border-radius: 5px;
+    text-align: center;
+    background-color: rgb(168, 203, 228);
+}
+input[type="text"]::placeholder {
+    color: rgb(67, 67, 67);
+}
