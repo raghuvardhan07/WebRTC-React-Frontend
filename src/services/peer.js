@@ -6,6 +6,7 @@ class PeerService {
                 { urls: 'stun:stun2.l.google.com:19302' }
                 ]
             })
+            
         }
     }
 

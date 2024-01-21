@@ -10,7 +10,11 @@ const Room = () => {
     const [remoteStream, setRemoteStream] = useState(null)
     const handleUserJoined = useCallback(({username, id}) => {
         setRemoteSocketId(id)
-        
+        socket.emit('room:ack', {to: id, id: socket.id})
+    }, [socket])
+    
+    const handleRoomAck = useCallback(({id}) => {
+        setRemoteSocketId(id)
     }, [])
 
     const handleCall = useCallback(async () => {
@@ -34,6 +38,8 @@ const Room = () => {
         setRemoteSocketId(from)
         const stream = await navigator.mediaDevices.getUserMedia({audio: true, video:true})
         setMyStream(stream)
+        // Add tracks once offer received
+        
         const answer = await peer.getAnswer(offer);
         socket.emit('accepted:call', {to: from, answer})
 
@@ -87,6 +93,7 @@ const Room = () => {
     }, [handleTrack])
     useEffect(() => {
         socket.on('user:joined', handleUserJoined)
+        socket.on('room:ack', handleRoomAck)
         socket.on('incoming:call', handleIncomingCall)
         socket.on('accepted:call', handleAcceptedCall)
         socket.on('neg:offer', handleNegAnswer)
@@ -97,8 +104,9 @@ const Room = () => {
             socket.off('accepted:call', handleAcceptedCall)
             socket.off('neg:offer', handleNegAnswer)
             socket.off('neg:answer', handleNegAccepted)
+            socket.on('room:ack', handleRoomAck)
         }
-    }, [socket, handleUserJoined, handleIncomingCall, handleAcceptedCall, handleNegAnswer, handleNegAccepted])
+    }, [socket, handleUserJoined, handleRoomAck, handleIncomingCall, handleAcceptedCall, handleNegAnswer, handleNegAccepted])
 
 
     return (
