@@ -62,9 +62,6 @@ button:hover {
     justify-content: center;
     border-radius: 20px;
 }
-.remoteStream > p {
-    margin-bottom: 5px;
-}
 .myVideo, .remoteVideo{
     width: fit-content;
     object-fit: cover;

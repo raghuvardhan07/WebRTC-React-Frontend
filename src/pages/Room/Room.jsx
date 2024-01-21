@@ -1,13 +1,21 @@
 import React, {useState, useCallback, useEffect} from 'react'
 import { useSocket } from '../../context/SocketProvider'
+import { usePeer } from '../../context/PeerProvider'
 import ReactPlayer from 'react-player'
-import peer from '../../services/peer'
 import './styles.css'
+
 const Room = () => {
     const socket = useSocket()
+    const peer = usePeer()
     const [remoteSocketId, setRemoteSocketId] = useState(null)
     const [myStream, setMyStream] = useState(null)
     const [remoteStream, setRemoteStream] = useState(null)
+
+    const sendStream = useCallback(async () => {
+        if (!myStream) return;
+        await myStream.getTracks().forEach(async (track) => await peer.addTrack(track, myStream));
+    }, [myStream, peer])
+
     const handleUserJoined = useCallback(({username, id}) => {
         setRemoteSocketId(id)
         socket.emit('room:ack', {to: id, id: socket.id})
@@ -17,102 +25,99 @@ const Room = () => {
         setRemoteSocketId(id)
     }, [])
 
+    // 1. Setup tracks, create offer, setLocalDescription, send message to socket
     const handleCall = useCallback(async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({audio: true, video:true})
-
-        const offer = await peer.getOffer()
+        sendStream();
+        const offer = await peer.createOffer()
+        await peer.setLocalDescription(offer)
         socket.emit("user:call", {to: remoteSocketId, offer})
 
-        setMyStream(stream)
-    }, [socket, remoteSocketId])
-
-    const sendStream = useCallback(() => {
-        if (!myStream) return;
-        for(const track of myStream.getTracks()) {
-            peer.peer.addTrack(track, myStream)
-        }
-    }, [myStream])
-
+    }, [sendStream, peer, socket, remoteSocketId])
+    
+    // 2. recieve offer, update remoteId, set Tracks, setRemoteDesc, create Answer and update localDesc, socket
     const handleIncomingCall = useCallback(async ({from, offer}) => {
         console.log(`Offer: ${offer} recieved from ${from}`);
         setRemoteSocketId(from)
-        const stream = await navigator.mediaDevices.getUserMedia({audio: true, video:true})
-        setMyStream(stream)
-        // Add tracks once offer received
-        
-        const answer = await peer.getAnswer(offer);
+        sendStream()
+        await peer.setRemoteDescription(offer);
+        const answer = await peer.createAnswer(offer);
+        await peer.setLocalDescription(answer)
         socket.emit('accepted:call', {to: from, answer})
 
-    }, [socket])
+    }, [sendStream, peer, socket])
+
+    // 3. Recieve answer, setRemoteDesc and id
     const handleAcceptedCall = useCallback(async ({from, answer}) => {
         console.log(`Answer: ${answer} recieved from ${from}`);
         setRemoteSocketId(from)
         await peer.setRemoteDescription(answer)
-        sendStream()
-        socket.emit('sent:stream', {to: from})
+    }, [peer])
 
-    }, [sendStream, socket])
+    // 4. If icecandidate received, then add it
+    const handleIceCandidate = useCallback(async (candidate) =>  {
+        // Add the ICE candidate to the peer connection
+        console.log("handling ice incoming", candidate);
+        await peer.addIceCandidate(candidate.candidate);
+    }, [peer])
 
-    
-    const handleTrack = useCallback(async (e) => {
+    // Peer Connection Events
+    // 1. Send the ice candidate to other person
+    const handleIceCandidateEvent = useCallback((event) => {
+        console.log("handling ice sending");
+        if (event.candidate) {
+            console.log("candidate", event.candidate);
+            socket.emit("ice:candidate", {candidate: event.candidate, to: remoteSocketId});
+        }
+    }, [remoteSocketId, socket])
+
+    // 2. Add the remote tracks to remoteStream
+    const handleTrackEvent = useCallback(async (e) => {
         console.log("received tracks");
         const remoteTracks = e.streams[0];
         setRemoteStream(remoteTracks);
     }, [])
-
-    // negotiation code
-    const handleNegNeed = useCallback(async () => {
-        const offer = await peer.getOffer()
-        socket.emit("neg:offer", {to: remoteSocketId, offer})
-    }, [remoteSocketId, socket])
-
-    const handleNegAnswer = useCallback(async ({from, offer}) => {
-        const answer = await peer.getAnswer(offer)
-        socket.emit("neg:answer", {to: from, answer})
-    }, [socket])
-
-    const handleNegAccepted = useCallback(async ({from, answer}) => {
-        if (peer.peer.signalingState === 'stable') return;
-        await peer.setRemoteDescription(answer)
-    }, [])
-
+    
+    // Peer object Event Listener
     useEffect(() => {
-        peer.peer.addEventListener("negotiationneeded", handleNegNeed)
+        peer.addEventListener("track", handleTrackEvent)
+        peer.addEventListener("icecandidate", handleIceCandidateEvent)
         return () => {
-            peer.peer.removeEventListener("negotiationneeded", handleNegNeed)
+            peer.removeEventListener("track", handleTrackEvent)
+            peer.removeEventListener("candidate", handleIceCandidateEvent)
         }
-    }, [handleNegNeed]) 
-    useEffect(() => {
-        peer.peer.addEventListener("track", handleTrack)
-        
-        return () => {
-            peer.peer.removeEventListener("track", handleTrack)
-            
-        }
-        
-    }, [handleTrack])
+    }, [handleIceCandidateEvent, handleTrackEvent, peer])
+
+    // Socket object Event Listener
     useEffect(() => {
         socket.on('user:joined', handleUserJoined)
         socket.on('room:ack', handleRoomAck)
         socket.on('incoming:call', handleIncomingCall)
         socket.on('accepted:call', handleAcceptedCall)
-        socket.on('neg:offer', handleNegAnswer)
-        socket.on('neg:answer', handleNegAccepted)
+        socket.on('ice:candidate', handleIceCandidate)
         return () => {
             socket.off('user:joined', handleUserJoined)
             socket.off('incoming:call', handleIncomingCall)
             socket.off('accepted:call', handleAcceptedCall)
-            socket.off('neg:offer', handleNegAnswer)
-            socket.off('neg:answer', handleNegAccepted)
             socket.on('room:ack', handleRoomAck)
         }
-    }, [socket, handleUserJoined, handleRoomAck, handleIncomingCall, handleAcceptedCall, handleNegAnswer, handleNegAccepted])
+    }, [socket, handleUserJoined, handleRoomAck, handleIncomingCall, handleAcceptedCall, handleIceCandidate])
 
+    // Set up myStream as soon as i come in room
+    const setUpPeer = useCallback(async () => {
+        if (peer) {
+            const stream = await navigator.mediaDevices.getUserMedia({audio: true, video:true})
+            setMyStream(stream)
+        }
+    }, [peer])
+    
+    useEffect(() => {
+        setUpPeer()
+    }, [setUpPeer])
 
     return (
         <div className="room" >
             <p className='title'>Room Page</p>
-            <p className='connectedTo'>{remoteSocketId ? `Connected to ${remoteSocketId}` : `No one in Room`}</p>
+            <p className='connectedTo'>{remoteSocketId ? `Room Member: ${remoteSocketId}` : `No one in Room`}</p>
             {remoteSocketId && <button onClick={handleCall}>Call</button>}
             <div className="streams">
             {myStream &&
@@ -122,7 +127,6 @@ const Room = () => {
             }
             {remoteStream &&
                 <div className='remoteStream'><p className='remoteStreamTitle'>Remote Stream</p>
-                <button onClick={sendStream}>Send your stream</button>
                 <ReactPlayer playing muted url={remoteStream} className="remoteVideo"/></div>
             }
             </div>
